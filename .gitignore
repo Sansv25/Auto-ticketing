@@ -1,0 +1,13 @@
+# Dependensi
+node_modules/
+
+# Sesi Login Chrome & Token Pengguna (Wajib diabaikan agar tidak bocor)
+.chrome_profile/
+.chrome_instagram_profile/
+.session.json
+
+# File Sementara
+temp_*
+*.log
+.DS_Store
+Thumbs.db

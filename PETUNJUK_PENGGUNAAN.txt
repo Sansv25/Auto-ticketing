@@ -1,0 +1,28 @@
+============================================================
+PANDUAN MENJALANKAN BOT OTOMASI TIKET PIKET ICONNET
+============================================================
+
+Paket ini digunakan oleh anak magang / petugas piket yang bertugas
+untuk memantau antrean tiket dari web Supabase dan secara otomatis
+mengirimkan pelaporan keluhan ke DM Instagram @iconnet.here.
+
+SYARAT DI LAPTOP PETUGAS:
+1. Google Chrome sudah terpasang.
+2. Node.js sudah terpasang (Download gratis di https://nodejs.org/).
+
+LANGKAH PENGGUNAAN:
+1. Jalankan "1_LOGIN_INSTAGRAM.bat" (Hanya sekali saja saat pertama kali):
+   - Login ke akun Instagram pelapor tim Anda di jendela Chrome yang muncul.
+   - Setelah masuk ke DM / Beranda, tutup jendela Chrome tersebut.
+
+2. Jalankan "2_MULAI_PIKET.bat" saat shift piket Anda dimulai:
+   - Jika diminta login Supabase pertama kali, masukkan email dan password
+     akun web Absensi Anda (cukup sekali).
+   - Bot akan langsung aktif dan di web dashboard akan muncul indikator:
+     "🟢 Bot Piket Online (Nama Anda)".
+   - Biarkan jendela terminal tetap menyala selama jam piket.
+
+3. Selesai Piket:
+   - Cukup tutup jendela terminal "2_MULAI_PIKET.bat" (atau tekan Ctrl+C).
+   - Di web dashboard, status bot otomatis berganti menjadi Offline.
+============================================================
