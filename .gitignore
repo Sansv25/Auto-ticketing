@@ -10,6 +10,7 @@ node_modules/
 .chrome_profile/
 .chrome_instagram_profile/
 .session.json
+.bot_id
 
 # File Sementara
 temp_*
