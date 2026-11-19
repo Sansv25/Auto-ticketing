@@ -16,8 +16,10 @@ LANGKAH PENGGUNAAN:
    - Setelah masuk ke DM / Beranda, tutup jendela Chrome tersebut.
 
 2. Jalankan "2_MULAI_PIKET.bat" saat shift piket Anda dimulai:
-   - Jika diminta login Supabase pertama kali, masukkan email dan password
-     akun web Absensi Anda (cukup sekali).
+   - Jika pertama kali di laptop ini, masukkan email dan password akun
+     web Absensi Anda di terminal.
+   - TIDAK PERLU COPY MANUAL FILE .env! Konfigurasi dan Kunci AI akan
+     otomatis diunduh dari server Supabase dan disimpan sendiri oleh bot.
    - Bot akan langsung aktif dan di web dashboard akan muncul indikator:
      "🟢 Bot Piket Online (Nama Anda)".
    - Biarkan jendela terminal tetap menyala selama jam piket.

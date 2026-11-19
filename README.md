@@ -23,7 +23,8 @@ Aplikasi bot lokal untuk petugas piket magang ICONNET Bali & Nusa Tenggara. Bot 
 
 ### Langkah 2: Mulai Shift Piket
 1. Klik ganda **`2_MULAI_PIKET.bat`**.
-2. *(Pertama kali saja)*: Masukkan email & password akun web Absensi Piket Anda.
+2. *(Pertama kali saja)*: Masukkan email & password akun web Absensi Piket Anda di terminal.
+   - **Zero-Manual Config**: Anda tidak perlu memindahkan file `.env` secara manual! Bot otomatis mendownload konfigurasi dan kunci AI dari server Supabase.
 3. Bot langsung aktif! Di halaman Web Ticketing akan muncul lencana:
    `🟢 Bot Piket Online (Nama Anda)`.
 4. Biarkan jendela terminal tetap terbuka selama jam kerja piket Anda.

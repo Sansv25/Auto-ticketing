@@ -165,6 +165,10 @@ async function detectInstagramIdentity(page) {
   }
 }
 
+// Default fallback kredensial Supabase publik (client-side / anon)
+const DEFAULT_SUPABASE_URL = 'https://osaliefiqfydqibwfafl.supabase.co';
+const DEFAULT_SUPABASE_ANON_KEY = 'sb_publishable__9cQZi4_08SGPlkjwxj2Kg_HPOkWMw-';
+
 // Baca Env Supabase & AI Key
 function loadEnv() {
   const envPaths = [
@@ -173,8 +177,8 @@ function loadEnv() {
     path.resolve(__dirname, '..', '.env.local'),
   ];
 
-  let supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://osaliefiqfydqibwfafl.supabase.co';
-  let supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+  let supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || DEFAULT_SUPABASE_URL;
+  let supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || DEFAULT_SUPABASE_ANON_KEY;
   let serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
   let nvidiaApiKey = process.env.NVIDIA_NIM_API_KEY || '';
 
@@ -202,7 +206,7 @@ function loadEnv() {
   return { supabaseUrl, supabaseAnonKey, serviceRoleKey, nvidiaApiKey };
 }
 
-const { supabaseUrl, supabaseAnonKey, serviceRoleKey, nvidiaApiKey } = loadEnv();
+let { supabaseUrl, supabaseAnonKey, serviceRoleKey, nvidiaApiKey } = loadEnv();
 const activeKey = serviceRoleKey || supabaseAnonKey;
 
 const supabase = createClient(supabaseUrl, activeKey, {
@@ -211,6 +215,57 @@ const supabase = createClient(supabaseUrl, activeKey, {
     autoRefreshToken: true,
   },
 });
+
+// Simpan / update file .env lokal secara otomatis jika belum ada atau diperbarui dari server
+function saveLocalEnv(config) {
+  try {
+    const envPath = path.resolve(__dirname, '.env');
+    const content = [
+      '# Konfigurasi Koneksi Supabase & AI Nemotron (Auto-Generated)',
+      `NEXT_PUBLIC_SUPABASE_URL=${config.supabaseUrl || DEFAULT_SUPABASE_URL}`,
+      `NEXT_PUBLIC_SUPABASE_ANON_KEY=${config.supabaseAnonKey || DEFAULT_SUPABASE_ANON_KEY}`,
+      `NVIDIA_NIM_API_KEY=${config.nvidiaApiKey || ''}`,
+    ].join('\n') + '\n';
+    fs.writeFileSync(envPath, content, 'utf-8');
+    logEvent('[CONFIG] ✓ File .env lokal berhasil dibuat/disinkronkan secara otomatis.');
+  } catch (e) {
+    console.warn('⚠️ [CONFIG] Gagal menyimpan file .env lokal:', e.message);
+  }
+}
+
+// Sinkronisasi otomatis konfigurasi & NVIDIA_NIM_API_KEY dari Supabase
+let lastConfigSyncTime = 0;
+async function syncRemoteConfig() {
+  lastConfigSyncTime = Date.now();
+  try {
+    const { data: settingRow, error } = await supabase
+      .from('ticketing_settings')
+      .select('value')
+      .eq('key', 'nvidia_nim_api_key')
+      .maybeSingle();
+
+    if (!error && settingRow?.value) {
+      const rawVal = settingRow.value;
+      const serverKey = (typeof rawVal === 'string' ? rawVal : JSON.stringify(rawVal))
+        .replace(/^"|"$/g, '')
+        .trim();
+
+      if (serverKey && serverKey !== nvidiaApiKey) {
+        nvidiaApiKey = serverKey;
+        logEvent(`[CONFIG] ✓ NVIDIA NIM API Key disinkronkan dari server (${nvidiaApiKey.slice(0, 10)}...)`);
+        saveLocalEnv({ supabaseUrl, supabaseAnonKey, nvidiaApiKey });
+      }
+    }
+  } catch (e) {
+    console.warn('⚠️ [CONFIG] Gagal menyinkronkan konfigurasi dari server:', e.message);
+  }
+
+  // Jika file .env lokal belum ada tapi kredensial tersedia, simpan otomatis
+  const envPath = path.resolve(__dirname, '.env');
+  if (!fs.existsSync(envPath) && nvidiaApiKey) {
+    saveLocalEnv({ supabaseUrl, supabaseAnonKey, nvidiaApiKey });
+  }
+}
 
 // Otomatis perbarui file sesi jika token Supabase diperbarui
 supabase.auth.onAuthStateChange((event, session) => {
@@ -470,6 +525,20 @@ KELUARAN HANYA JSON VALID TANPA MARKDOWN:
   "is_closing": true/false
 }`;
 
+  if (!nvidiaApiKey) {
+    await syncRemoteConfig();
+  }
+
+  if (!nvidiaApiKey) {
+    console.warn('⚠️ [AI] NVIDIA_NIM_API_KEY belum tersedia di server maupun lokal.');
+    return {
+      action: 'reply',
+      text: defaultSafeReply,
+      is_closing: false,
+      ticket_number: null,
+    };
+  }
+
   try {
     const res = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
       method: 'POST',
@@ -544,6 +613,7 @@ KELUARAN HANYA JSON VALID TANPA MARKDOWN:
 async function ensureAuthenticated() {
   if (serviceRoleKey) {
     console.log('[AUTH] Menggunakan SUPABASE_SERVICE_ROLE_KEY.');
+    await syncRemoteConfig();
     return;
   }
 
@@ -558,7 +628,9 @@ async function ensureAuthenticated() {
           refresh_token: sessionData.refresh_token,
         });
         if (!error && data?.user) {
+          myUserEmail = data.user.email;
           console.log(`[AUTH] Sesi tersimpan aktif untuk: ${data.user.email}`);
+          await syncRemoteConfig();
           return;
         } else if (error) {
           console.log(`[AUTH] Sesi tersimpan sudah kedaluwarsa (${error.message}). Memerlukan login ulang...`);
@@ -571,9 +643,10 @@ async function ensureAuthenticated() {
   }
 
   console.log('\n======================================================');
-  console.log('  LOGIN KE SUPABASE UNTUK MENJALANKAN BOT LOKAL');
+  console.log('  SETUP PERANGKAT BARU: LOGIN SISTEM PIKET');
   console.log('======================================================');
-  console.log('Masukkan akun login Absensi Piket Anda (cukup sekali):');
+  console.log('Konfigurasi .env & Kunci AI akan otomatis diunduh dari server.');
+  console.log('Masukkan akun login Absensi Piket Anda (cukup 1 kali):');
 
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   const ask = (q) => new Promise((resolve) => rl.question(q, resolve));
@@ -592,6 +665,7 @@ async function ensureAuthenticated() {
     process.exit(1);
   }
 
+  myUserEmail = data.user.email;
   fs.writeFileSync(
     sessionFile,
     JSON.stringify(
@@ -606,6 +680,7 @@ async function ensureAuthenticated() {
   );
 
   console.log(`✓ Berhasil login sebagai: ${data.user.email}\n`);
+  await syncRemoteConfig();
 }
 
 // Luncurkan Browser Chrome
@@ -2286,6 +2361,11 @@ async function startBotLoop() {
       if (!isAuthValid) {
         updateStatusLine('⚠️ [SESI EXPIRED] Sesi login Supabase habis. Tutup dan buka kembali bot untuk login!');
         return;
+      }
+
+      // Cek sinkronisasi konfigurasi AI berkala (~5 menit sekali)
+      if (Date.now() - lastConfigSyncTime > 300000) {
+        await syncRemoteConfig();
       }
 
       // Pastikan identitas IG (ds_user_id) sudah terdeteksi
