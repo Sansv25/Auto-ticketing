@@ -352,20 +352,30 @@ function extractTicketOutcome(text) {
   if (!text) return null;
   const lower = text.toLowerCase();
 
-  // 1. Cek nomor tiket resmi alfanumerik (6 s/d 12 karakter, wajib ada angka)
-  const ticketRegex = /(?:id\s*tiket|nomor\s*tiket|no\.?\s*tiket|tiket|nomor\s*pelaporan|no\.?\s*pelaporan)\s*[:#]?\s*([A-Z0-9]{6,12})\b/i;
-  const match = text.match(ticketRegex);
-  if (match && match[1] && /\d/.test(match[1])) {
-    return { type: 'ticket', value: match[1].toUpperCase() };
+  const blacklist = new Set([
+    'ICONNET', 'WHATSAPP', 'INSTAGRAM', 'INTERNET', 'MODEMNYA',
+    'PELAPORAN', 'PELAPORANNYA', 'GANGGUAN', 'INFORMASI', 'PERANGKAT',
+    'PERBAIKAN', 'KENDALANYA', 'NOMORNYA', 'TERDAFTAR', 'PENGECEKAN',
+    'SEBELUMNYA', 'TERHUBUNG', 'TERPUTUS', 'MENUNGGU', 'BANTUAN'
+  ]);
+
+  // 1. Prioritas Utama: Cari nomor tiket yang didahului kata kunci penanda tiket
+  // Gunakan RegExp global (/gi) dan loop matchAll untuk memeriksa SEMUA kemunculan di teks
+  const prefixRegex = /(?:id\s*tiket|nomor\s*tiket|no\.?\s*tiket|tiket\s*(?:pelaporan)?|nomor\s*pelaporan|no\.?\s*pelaporan|id\s*pelaporan|nomor\s*laporan|no\.?\s*laporan|id\s*laporan)\s*[:#]?\s*(?:dengan\s*(?:nomor|no)\s*[:#]?)?\s*([A-Za-z0-9]{6,12})\b/gi;
+  for (const match of text.matchAll(prefixRegex)) {
+    const candidate = match[1].toUpperCase();
+    if (/\d/.test(candidate) && !blacklist.has(candidate)) {
+      return { type: 'ticket', value: candidate };
+    }
   }
 
-  // Standalone kode tiket (mis. A2000842, IN123456, R2J92BW3)
-  const standaloneMatch = text.match(/\b([A-Z][A-Z0-9]{6,10})\b/);
-  if (standaloneMatch && standaloneMatch[1] && /\d/.test(standaloneMatch[1])) {
-    const val = standaloneMatch[1].toUpperCase();
-    const blacklist = new Set(['ICONNET', 'WHATSAPP', 'INSTAGRAM', 'INTERNET', 'MODEMNYA', 'PELAPORAN']);
-    if (!blacklist.has(val)) {
-      return { type: 'ticket', value: val };
+  // 1b. Pola kedua: format alfanumerik khas tiket (6-10 karakter diawali huruf, wajib ada angka)
+  // Periksa SEMUA kata di teks dengan matchAll agar tidak terhenti di kata pertama
+  const standaloneRegex = /\b([A-Za-z][A-Za-z0-9]{6,9})\b/g;
+  for (const match of text.matchAll(standaloneRegex)) {
+    const candidate = match[1].toUpperCase();
+    if (/\d/.test(candidate) && !blacklist.has(candidate)) {
+      return { type: 'ticket', value: candidate };
     }
   }
 
@@ -400,7 +410,7 @@ function extractTicketOutcome(text) {
     return { type: 'mass_outage', value: 'Gangguan Massal di Area' };
   }
 
-  // 5. Cek chat diakhiri oleh CS
+  // 5. Cek chat diakhiri oleh CS (hanya jika tidak ditemukan tiket atau output resolusi lain)
   if (lower.includes('chat akan kami akhiri') || lower.includes('percakapan kami akhiri') || lower.includes('sesi kami akhiri')) {
     return { type: 'closed_by_cs', value: 'Sesi Diakhiri oleh CS ICONNET' };
   }
