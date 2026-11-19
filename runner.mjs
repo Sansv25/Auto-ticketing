@@ -531,7 +531,10 @@ KELUARAN HANYA JSON VALID:
         model: 'nvidia/nemotron-3.5-lightning-30b-a3b',
         messages: [
           { role: 'system', content: prompt },
-          { role: 'user', content: incomingMessage.trim() },
+          {
+            role: 'user',
+            content: `Pesan/pertanyaan dari CS ICONNET kepada kita:\n"""\n${incomingMessage.trim()}\n"""\n\nTugasmu: Jawab pertanyaan CS di atas sebagai KONSUMEN / PELANGGAN ${ticket.name} (sapa CS dengan "${csSalutation}"). Berikan jawaban data kendala (${statusIndikatorText}), kontak (${contactInfo}), dan foto modem (${photoInfo}). JANGAN menyapa dengan nama akun pelapor sendiri dan JANGAN menjiplak salam/kata CS. Kembalikan format JSON saja.`,
+          },
         ],
         temperature: 0.1,
         max_tokens: 300,
@@ -554,9 +557,10 @@ KELUARAN HANYA JSON VALID:
     // Post-processing Sanitizer untuk menjamin 100% akurasi respon
     if (parsed.text) {
       const lower = parsed.text.toLowerCase();
+      const lowerIncoming = incomingMessage.toLowerCase();
 
-      // 1. Deteksi jika LLM tersesat/parroting menjiplak pesan pembuka CS
-      if (
+      // 1. Deteksi jika LLM tersesat/parroting menjiplak pesan CS
+      const isParrotPhrase =
         lower.includes('pelanggan setia') ||
         lower.includes('mohon maaf atas ketidaknyamanan') ||
         lower.includes('mohon melengkapi informasi data pendukung') ||
@@ -565,8 +569,22 @@ KELUARAN HANYA JSON VALID:
         lower.includes('apakah dapat dibantu informasikan nomor') ||
         lower.includes('mohon dibantu mengirimkan foto perangkat') ||
         lower.includes('mohon bantuannya untuk mengirimkan lampiran') ||
-        lower.includes('mohon bantuannya untuk kirimkan lampiran')
-      ) {
+        lower.includes('mohon bantuannya untuk kirimkan lampiran') ||
+        lower.includes('ada lagi yang dapat kami bantu') ||
+        lower.includes('kami masih menunggu jawaban') ||
+        lower.includes('menunggu jawaban kakak') ||
+        lower.includes('saat ini kami masih') ||
+        lower.includes('akan kami bantu buatkan') ||
+        lower.includes('id pelaporannya agar di lakukan') ||
+        lower.includes('mohon kesediaannya menunggu');
+
+      // Cek apakah LLM mengulang kalimat CS dengan panjang signifikan (> 40 karakter sama)
+      const isVerbatimEcho =
+        lowerIncoming.length > 50 &&
+        lower.length > 50 &&
+        (lowerIncoming.includes(lower.slice(0, 50)) || lower.includes(lowerIncoming.slice(0, 50)));
+
+      if (isParrotPhrase || isVerbatimEcho) {
         logEvent('⚠️ [AI SANITIZER] Terdeteksi LLM menjiplak kalimat CS! Mengganti ke jawaban aman terstruktur.');
         parsed.text = defaultSafeReply;
       }
@@ -1729,15 +1747,22 @@ async function syncActiveChat(activeTicket) {
 
     // 3. DETEKSI APAKAH SESI TELAH DITUTUP OLEH CS (misal: "chat akan kami akhiri", "tidak ada jawaban", dll)
     const lowerCombined = combinedCsText.toLowerCase();
+
+    // Hitung durasi tiket aktif sejak started_at
+    const ticketAgeMs = activeTicket.started_at ? (Date.now() - new Date(activeTicket.started_at).getTime()) : 0;
+    // Jika pesan menyebutkan 'tidak ada jawaban' tetapi tiket baru berjalan < 3 menit, itu pesan basi dari sesi CS sebelumnya!
+    const isStaleTimeoutMessage = lowerCombined.includes('tidak ada jawaban') && ticketAgeMs < 180000;
+
     const isClosedByCs =
-      lowerCombined.includes('chat akan kami akhiri') ||
-      lowerCombined.includes('percakapan kami akhiri') ||
-      lowerCombined.includes('sesi kami akhiri') ||
-      (lowerCombined.includes('terima kasih telah menghubungi') &&
-        (lowerCombined.includes('selamat pagi') ||
-         lowerCombined.includes('selamat siang') ||
-         lowerCombined.includes('selamat sore') ||
-         lowerCombined.includes('selamat malam')));
+      !isStaleTimeoutMessage &&
+      (lowerCombined.includes('chat akan kami akhiri') ||
+        lowerCombined.includes('percakapan kami akhiri') ||
+        lowerCombined.includes('sesi kami akhiri') ||
+        (lowerCombined.includes('terima kasih telah menghubungi') &&
+          (lowerCombined.includes('selamat pagi') ||
+            lowerCombined.includes('selamat siang') ||
+            lowerCombined.includes('selamat sore') ||
+            lowerCombined.includes('selamat malam'))));
 
     if (isClosedByCs) {
       console.log(`\n🏁 [SESI DITUTUP OLEH CS] CS ICONNET telah menutup percakapan.`);
