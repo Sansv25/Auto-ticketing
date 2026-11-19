@@ -1649,12 +1649,6 @@ async function syncActiveChat(activeTicket) {
         lowerM === 'kemarin' ||
         lowerM.includes('auto-detected') ||
         lowerM.includes('outcome') ||
-        lowerM.includes('seluruh agent') ||
-        lowerM.includes('melayani pelanggan lain') ||
-        lowerM.includes('menunggu dengan menyampaikan') ||
-        lowerM.includes('antrean') ||
-        lowerM.includes('antrian') ||
-        lowerM.includes('menunggu antrian') ||
         lowerM.startsWith('+55 ') ||
         lowerM.startsWith('phone number') ||
         lowerM.includes('business account') ||
@@ -1916,6 +1910,20 @@ async function syncActiveChat(activeTicket) {
     // 4. BALASAN AI / ESCALATION UNTUK PERTANYAAN CS (JIKA CHAT BELUM BERAKHIR)
     const recentCsBubbles = csBubbles.slice(-4);
     const lastCsMessage = recentCsBubbles.join('\n');
+
+    // Jika pesan CS HANYA berisi pesan antrean otomatis ("seluruh agent sedang melayani"),
+    // jangan dibalas AI, biarkan tercatat di history chat dan tunggu sampai agent manusia menyapa/bertanya
+    const lowerCs = (lastCsMessage || '').toLowerCase();
+    const isQueueWaitingOnly =
+      (lowerCs.includes('seluruh agent') || lowerCs.includes('melayani pelanggan lain')) &&
+      !lowerCs.includes('yang akan membantu') &&
+      !lowerCs.includes('apakah dapat') &&
+      !lowerCs.includes('nomor tiket') &&
+      !lowerCs.includes('bisa dibantu');
+
+    if (isQueueWaitingOnly) {
+      return;
+    }
 
     if (
       lastCsMessage &&
