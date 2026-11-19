@@ -27,4 +27,9 @@ LANGKAH PENGGUNAAN:
 3. Selesai Piket:
    - Cukup tutup jendela terminal "2_MULAI_PIKET.bat" (atau tekan Ctrl+C).
    - Di web dashboard, status bot otomatis berganti menjadi Offline.
+
+4. AUTO-UPDATE OTOMATIS:
+   - Setiap kali Anda menjalankan "2_MULAI_PIKET.bat", bot akan otomatis
+     memeriksa pembaruan versi terbaru dari GitHub dan mengunduhnya mandiri.
+   - Anda TIDAK PERLU mengetik "git pull" di terminal!
 ============================================================

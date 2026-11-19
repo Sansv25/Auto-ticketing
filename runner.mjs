@@ -11,9 +11,11 @@ import fs from 'fs';
 import readline from 'readline';
 import os from 'os';
 import { fileURLToPath } from 'url';
+import { checkForUpdates } from './updater.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+let lastUpdateCheckTime = Date.now();
 
 // Auto-Deteksi Lokasi Google Chrome di Komputer Pengguna
 function findChromeExecutable() {
@@ -2366,6 +2368,19 @@ async function startBotLoop() {
       // Cek sinkronisasi konfigurasi AI berkala (~5 menit sekali)
       if (Date.now() - lastConfigSyncTime > 300000) {
         await syncRemoteConfig();
+      }
+
+      // Cek pembaruan bot otomatis dari GitHub (~15 menit sekali, hanya saat antrean idle)
+      if (!currentActiveTicketId && Date.now() - lastUpdateCheckTime > 900000) {
+        lastUpdateCheckTime = Date.now();
+        try {
+          const updateRes = await checkForUpdates(true);
+          if (updateRes?.updated) {
+            logEvent('\n🚀 [UPDATE] Bot telah diperbarui ke versi terbaru dari GitHub! Memuat ulang bot...');
+            await new Promise((r) => setTimeout(r, 2000));
+            process.exit(42);
+          }
+        } catch {}
       }
 
       // Pastikan identitas IG (ds_user_id) sudah terdeteksi

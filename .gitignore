@@ -12,7 +12,8 @@ node_modules/
 .session.json
 .bot_id
 
-# File Sementara
+# File Sementara & Versi Lokal
+.version
 temp_*
 *.log
 .DS_Store

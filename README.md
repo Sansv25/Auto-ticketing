@@ -31,3 +31,10 @@ Aplikasi bot lokal untuk petugas piket magang ICONNET Bali & Nusa Tenggara. Bot 
 
 ### Langkah 3: Selesai Piket
 Tutup jendela terminal (atau tekan `Ctrl + C`). Status di web dashboard otomatis menjadi `Offline`.
+
+---
+
+## 🔄 Fitur Auto-Update Otomatis
+- Anda **tidak perlu menjalankan `git pull`** manual di terminal.
+- Setiap kali `2_MULAI_PIKET.bat` dijalankan, bot secara otomatis memeriksa versi terbaru di GitHub dan mengunduh pembaruan jika tersedia.
+- Bahkan saat bot sedang berjalan, bot akan memeriksa update secara berkala saat antrean sedang senggang dan memperbarui dirinya sendiri tanpa mengganggu tiket aktif.

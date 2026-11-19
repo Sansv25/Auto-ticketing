@@ -18,9 +18,24 @@ if not exist "node_modules\@supabase\supabase-js" (
     call npm install --omit=dev
 )
 
+:RUN_BOT
+echo.
+echo Memeriksa pembaruan bot otomatis...
+node updater.mjs
 echo.
 echo Menjalankan bot runner...
 node runner.mjs
+
+if %errorlevel% equ 42 (
+    echo.
+    echo ========================================================
+    echo [UPDATE] Memuat ulang bot dengan versi terbaru...
+    echo ========================================================
+    timeout /t 2 >nul
+    cls
+    goto RUN_BOT
+)
+
 pause
 exit /b 0
 
