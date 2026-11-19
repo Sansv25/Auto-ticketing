@@ -63,7 +63,7 @@ function getBotId() {
       const saved = fs.readFileSync(botIdFile, 'utf-8').trim();
       if (saved) return saved;
     }
-  } catch {}
+  } catch { }
 
   const cleanHost = (os.hostname() || 'pc')
     .toLowerCase()
@@ -74,7 +74,7 @@ function getBotId() {
   const newId = `bot_${cleanHost || 'pc'}_${rand}`;
   try {
     fs.writeFileSync(botIdFile, newId, 'utf-8');
-  } catch {}
+  } catch { }
   return newId;
 }
 
@@ -102,7 +102,7 @@ async function detectInstagramIdentity(page) {
     } catch {
       try {
         cookies = await page.cookies();
-      } catch {}
+      } catch { }
     }
 
     const dsCookie = (cookies || []).find((c) => c.name === 'ds_user_id' && c.value);
@@ -158,7 +158,7 @@ async function detectInstagramIdentity(page) {
         if (detectedUsername) {
           myIgUsername = detectedUsername;
         }
-      } catch {}
+      } catch { }
     }
 
     return { loggedIn: true, igUserId: myIgUserId, igUsername: myIgUsername };
@@ -286,7 +286,7 @@ supabase.auth.onAuthStateChange((event, session) => {
           2
         )
       );
-    } catch {}
+    } catch { }
   }
 });
 
@@ -452,7 +452,7 @@ async function generateAIReply(ticket, incomingMessage) {
       .select('id')
       .eq('ticket_id', ticket.id);
     hasImages = Boolean(ticketImages && ticketImages.length > 0);
-  } catch {}
+  } catch { }
 
   const contactInfo = ticket.alt_phone
     ? `nomor alternatif di ${ticket.alt_phone} dan nomor WhatsApp di ${ticket.phone || '-'}`
@@ -647,10 +647,10 @@ async function ensureAuthenticated() {
           console.log(`[AUTH] Sesi tersimpan sudah kedaluwarsa (${error.message}). Memerlukan login ulang...`);
           try {
             fs.unlinkSync(sessionFile);
-          } catch {}
+          } catch { }
         }
       }
-    } catch {}
+    } catch { }
   }
 
   console.log('\n======================================================');
@@ -729,7 +729,7 @@ async function scrollChatToBottom(page) {
         if (c) c.scrollTop = c.scrollHeight;
       }
     });
-  } catch {}
+  } catch { }
 }
 
 async function getDirectThreadPage() {
@@ -744,7 +744,7 @@ async function getDirectThreadPage() {
       }
     } catch {
       console.log('\n⚠️ Tab Chrome tidak responsif, me-restart browser...');
-      try { await persistentBrowser.close(); } catch {}
+      try { await persistentBrowser.close(); } catch { }
       persistentBrowser = null;
       persistentPage = null;
     }
@@ -774,7 +774,7 @@ async function getDirectThreadPage() {
         await new Promise((r) => setTimeout(r, 600));
       }
     }
-  } catch {}
+  } catch { }
 
   // Scroll ke paling bawah
   await scrollChatToBottom(persistentPage);
@@ -782,8 +782,19 @@ async function getDirectThreadPage() {
   return persistentPage;
 }
 
-// Ketikkan dan kirim pesan teks ke thread DM Instagram
+// Antrean Mutex & In-Memory Claim untuk Pengiriman Pesan (Anti-Typo & Anti-Balapan Keystroke)
+let typingChain = Promise.resolve();
+const currentlySendingMsgIds = new Set();
+
 async function sendMessageToDirectThread(page, text) {
+  // Serialkan semua panggilan pengiriman pesan sehingga tidak pernah ada 2 proses mengetik di waktu yang sama
+  const task = typingChain.then(() => _doSendMessage(page, text));
+  typingChain = task.catch(() => {});
+  return task;
+}
+
+// Ketikkan dan kirim pesan teks ke thread DM Instagram secara presisi (0% typo)
+async function _doSendMessage(page, text) {
   const messageInputSelector =
     'div[role="textbox"][contenteditable="true"], div[aria-label="Message"], div[aria-label="Pesan"]';
   const messageBox = await page.waitForSelector(messageInputSelector, { timeout: 15000 });
@@ -793,23 +804,73 @@ async function sendMessageToDirectThread(page, text) {
   }
 
   await messageBox.click();
-  await new Promise((r) => setTimeout(r, 400));
+  await new Promise((r) => setTimeout(r, 200));
 
-  for (const char of text) {
-    if (char === '\n') {
-      await page.keyboard.down('Shift');
-      await page.keyboard.press('Enter');
-      await page.keyboard.up('Shift');
-    } else {
-      await page.keyboard.sendCharacter(char);
+  // 1. Bersihkan sisa isi kotak pesan terlebih dahulu
+  await page.evaluate(() => {
+    const el = document.querySelector(
+      'div[role="textbox"][contenteditable="true"], div[aria-label="Message"], div[aria-label="Pesan"]'
+    );
+    if (el) {
+      el.focus();
+      const sel = window.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      sel.removeAllRanges();
+      sel.addRange(range);
+      document.execCommand('delete');
     }
-    const delay = Math.floor(Math.random() * (45 - 20 + 1)) + 20;
-    await new Promise((r) => setTimeout(r, delay));
+  });
+  await new Promise((r) => setTimeout(r, 100));
+
+  // 2. Masukkan teks pesan secara instan & 100% presisi (0% typo) menggunakan document.execCommand('insertText')
+  const inserted = await page.evaluate((val) => {
+    const el = document.querySelector(
+      'div[role="textbox"][contenteditable="true"], div[aria-label="Message"], div[aria-label="Pesan"]'
+    );
+    if (!el) return false;
+    el.focus();
+    const success = document.execCommand('insertText', false, val);
+    return success;
+  }, text);
+
+  // Fallback: Jika execCommand tidak didukung pada browser tertentu, ketik dengan keyboard
+  if (!inserted) {
+    for (const char of text) {
+      if (char === '\n') {
+        await page.keyboard.down('Shift');
+        await page.keyboard.press('Enter');
+        await page.keyboard.up('Shift');
+      } else {
+        await page.keyboard.sendCharacter(char);
+      }
+      await new Promise((r) => setTimeout(r, 15));
+    }
   }
 
-  await new Promise((r) => setTimeout(r, 600));
+  await new Promise((r) => setTimeout(r, 400));
   await page.keyboard.press('Enter');
-  await new Promise((r) => setTimeout(r, 2500));
+  await new Promise((r) => setTimeout(r, 800));
+
+  // 3. Verifikasi apakah pesan terkirim; jika kotak masih berisi teks, klik tombol Send/Kirim
+  await page.evaluate(() => {
+    const el = document.querySelector(
+      'div[role="textbox"][contenteditable="true"], div[aria-label="Message"], div[aria-label="Pesan"]'
+    );
+    const remainingText = (el?.innerText || '').trim();
+    if (remainingText.length > 0) {
+      const buttons = Array.from(document.querySelectorAll('div[role="button"], button'));
+      for (const b of buttons) {
+        const btnText = (b.innerText || b.getAttribute('aria-label') || '').trim();
+        if (btnText === 'Send' || btnText === 'Kirim') {
+          b.click();
+          break;
+        }
+      }
+    }
+  });
+
+  await new Promise((r) => setTimeout(r, 1000));
 }
 
 // Eksekusi Kirim Tiket Baru ke Instagram (tiket sudah diklaim atomik sebelumnya!)
@@ -885,7 +946,7 @@ async function dispatchTicket(ticket) {
         for (const p of tempPaths) {
           try {
             fs.unlinkSync(p);
-          } catch {}
+          } catch { }
         }
       }
     }
@@ -893,18 +954,18 @@ async function dispatchTicket(ticket) {
     const now = new Date().toISOString();
     const updatePayload = multiBotSchemaReady
       ? {
-          status: 'in_conversation',
-          runner_id: MY_BOT_ID,
-          runner_ig_id: myIgUserId,
-          runner_label: getRunnerLabel(),
-          started_at: ticket.started_at || now,
-          updated_at: now,
-        }
+        status: 'in_conversation',
+        runner_id: MY_BOT_ID,
+        runner_ig_id: myIgUserId,
+        runner_label: getRunnerLabel(),
+        started_at: ticket.started_at || now,
+        updated_at: now,
+      }
       : {
-          status: 'in_conversation',
-          started_at: ticket.started_at || now,
-          updated_at: now,
-        };
+        status: 'in_conversation',
+        started_at: ticket.started_at || now,
+        updated_at: now,
+      };
 
     await supabase.from('tickets').update(updatePayload).eq('id', ticket.id);
 
@@ -923,17 +984,17 @@ async function dispatchTicket(ticket) {
       try {
         const releasePayload = multiBotSchemaReady
           ? {
-              status: 'queued',
-              runner_id: null,
-              runner_ig_id: null,
-              runner_label: null,
-              started_at: null,
-              updated_at: new Date().toISOString(),
-            }
+            status: 'queued',
+            runner_id: null,
+            runner_ig_id: null,
+            runner_label: null,
+            started_at: null,
+            updated_at: new Date().toISOString(),
+          }
           : { status: 'queued', started_at: null, updated_at: new Date().toISOString() };
         await supabase.from('tickets').update(releasePayload).eq('id', ticket.id);
         console.log(`↩️ [ROLLBACK] Tiket "${ticket.name}" dikembalikan ke antrean karena gagal kirim.`);
-      } catch {}
+      } catch { }
     }
   }
 }
@@ -953,20 +1014,34 @@ async function sendPendingOutboundMessages(page, activeTicket) {
     if (!pendingMsgs || pendingMsgs.length === 0) return;
 
     for (const msg of pendingMsgs) {
-      console.log(`\n📤 [KIRIM MANUAL WEB -> IG] Mengirim pesan admin ke DM Instagram: "${msg.body}"`);
-      await supabase
-        .from('ticket_messages')
-        .update({ ig_mid: `sending_${msg.id}` })
-        .eq('id', msg.id);
+      if (currentlySendingMsgIds.has(msg.id)) continue;
+      currentlySendingMsgIds.add(msg.id);
 
-      await sendMessageToDirectThread(page, msg.body);
+      try {
+        // Klaim secara atomik di database: hanya proses jika ig_mid masih 'pending%'
+        const { data: claimed, error: claimErr } = await supabase
+          .from('ticket_messages')
+          .update({ ig_mid: `sending_${msg.id}` })
+          .eq('id', msg.id)
+          .like('ig_mid', 'pending%')
+          .select('id');
 
-      await supabase
-        .from('ticket_messages')
-        .update({ ig_mid: `sent_${msg.id}` })
-        .eq('id', msg.id);
+        if (claimErr || !claimed || claimed.length === 0) {
+          continue; // Sudah diklaim oleh realtime listener
+        }
 
-      console.log(`   ✓ Pesan manual admin sukses terkirim ke Instagram DM.`);
+        console.log(`\n📤 [KIRIM MANUAL WEB -> IG] Mengirim pesan admin ke DM Instagram: "${msg.body}"`);
+        await sendMessageToDirectThread(page, msg.body);
+
+        await supabase
+          .from('ticket_messages')
+          .update({ ig_mid: `sent_${msg.id}` })
+          .eq('id', msg.id);
+
+        console.log(`   ✓ Pesan manual admin sukses terkirim ke Instagram DM.`);
+      } finally {
+        currentlySendingMsgIds.delete(msg.id);
+      }
     }
   } catch (err) {
     console.error('⚠️ Gagal mengirim pesan manual pending ke Instagram:', err.message);
@@ -1369,9 +1444,9 @@ async function syncActiveChat(activeTicket) {
         item.direction === 'out' &&
         text.includes(activeTicket.customer_id) &&
         (text.includes('ID Pelanggan') ||
-         text.includes('Nama Pelanggan') ||
-         text.includes('Keluhan:') ||
-         text.includes('izin melaporkan'));
+          text.includes('Nama Pelanggan') ||
+          text.includes('Keluhan:') ||
+          text.includes('izin melaporkan'));
       if (isOurOpeningReport) {
         openingMsgIndex = i;
         break;
@@ -1692,9 +1767,9 @@ async function syncActiveChat(activeTicket) {
         combinedCsText.toLowerCase().includes('sesi kami akhiri') ||
         (combinedCsText.toLowerCase().includes('terima kasih telah menghubungi') &&
           (combinedCsText.toLowerCase().includes('selamat pagi') ||
-           combinedCsText.toLowerCase().includes('selamat siang') ||
-           combinedCsText.toLowerCase().includes('selamat sore') ||
-           combinedCsText.toLowerCase().includes('selamat malam')));
+            combinedCsText.toLowerCase().includes('selamat siang') ||
+            combinedCsText.toLowerCase().includes('selamat sore') ||
+            combinedCsText.toLowerCase().includes('selamat malam')));
 
       if (!hasSentAck && !isAlreadyClosedByCs) {
         const timeCtx = getWitaTimeContext();
@@ -1884,75 +1959,75 @@ async function syncActiveChat(activeTicket) {
           await sendMessageToDirectThread(page, aiReply.text);
 
           // Rekam ke ticket_messages dan update ai_turns
-            await supabase.from('ticket_messages').insert({
-              ticket_id: activeTicket.id,
-              direction: 'out',
-              sender: 'ai',
-              body: aiReply.text,
-            });
+          await supabase.from('ticket_messages').insert({
+            ticket_id: activeTicket.id,
+            direction: 'out',
+            sender: 'ai',
+            body: aiReply.text,
+          });
+
+          await supabase
+            .from('tickets')
+            .update({
+              ai_turns: (activeTicket.ai_turns || 0) + 1,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', activeTicket.id);
+
+          lastAnsweredMessage = lastCsMessage;
+          console.log(`✅ [AI TERKIRIM] Berhasil membalas ke CS ICONNET: "${aiReply.text}"\n`);
+
+          // Cek apakah percakapan mencapai akhir sesi (closing / nomor tiket keluar / kesimpulan hasil)
+          const fallbackOutcome = extractTicketOutcome(lastCsMessage);
+          const detectedOutcome =
+            aiReply.ticket_number || (fallbackOutcome ? fallbackOutcome.value : null);
+
+          // KUNCI PENGAMAN: Sesi HANYA boleh ditutup jika SUDAH ADA nomor tiket resmi atau output resolusi!
+          const hasFinalOutcome = Boolean(detectedOutcome) || Boolean(activeTicket.ticket_number);
+          const isClosing = hasFinalOutcome && (aiReply.is_closing || Boolean(detectedOutcome));
+
+          if (detectedOutcome && detectedOutcome !== activeTicket.ticket_number) {
+            console.log(`🎉 [OUTPUT / KESIMPULAN TIKET] Terdeteksi Output: "${detectedOutcome}"!`);
+            await supabase
+              .from('tickets')
+              .update({ ticket_number: detectedOutcome })
+              .eq('id', activeTicket.id);
+          }
+
+          if (isClosing) {
+            console.log(`🏁 [SESI PENUTUPAN] AI telah menyampaikan salam penutup / merangkum resolusi sesi chat.`);
+            console.log(`⏳ Memberi jeda 40 detik agar CS menutup sesi chat sebelum memproses tiket antrean berikutnya...`);
+
+            await new Promise((r) => setTimeout(r, 40000));
+
+            const finalNow = new Date().toISOString();
+            const isActualTicket = detectedOutcome && /^[A-Z0-9]{8}$/.test(detectedOutcome);
+            const finalStatus = isActualTicket ? 'ticket_issued' : 'closed';
 
             await supabase
               .from('tickets')
               .update({
-                ai_turns: (activeTicket.ai_turns || 0) + 1,
-                updated_at: new Date().toISOString(),
+                status: finalStatus,
+                ticket_issued_at: isActualTicket ? finalNow : null,
+                updated_at: finalNow,
+                ticket_number: detectedOutcome || activeTicket.ticket_number,
+                ...(multiBotSchemaReady ? { pending_ai_reply: null } : {}),
               })
               .eq('id', activeTicket.id);
 
-            lastAnsweredMessage = lastCsMessage;
-            console.log(`✅ [AI TERKIRIM] Berhasil membalas ke CS ICONNET: "${aiReply.text}"\n`);
-
-            // Cek apakah percakapan mencapai akhir sesi (closing / nomor tiket keluar / kesimpulan hasil)
-            const fallbackOutcome = extractTicketOutcome(lastCsMessage);
-            const detectedOutcome =
-              aiReply.ticket_number || (fallbackOutcome ? fallbackOutcome.value : null);
-            
-            // KUNCI PENGAMAN: Sesi HANYA boleh ditutup jika SUDAH ADA nomor tiket resmi atau output resolusi!
-            const hasFinalOutcome = Boolean(detectedOutcome) || Boolean(activeTicket.ticket_number);
-            const isClosing = hasFinalOutcome && (aiReply.is_closing || Boolean(detectedOutcome));
-
-            if (detectedOutcome && detectedOutcome !== activeTicket.ticket_number) {
-              console.log(`🎉 [OUTPUT / KESIMPULAN TIKET] Terdeteksi Output: "${detectedOutcome}"!`);
+            if (!multiBotSchemaReady) {
               await supabase
-                .from('tickets')
-                .update({ ticket_number: detectedOutcome })
-                .eq('id', activeTicket.id);
+                .from('ticketing_settings')
+                .delete()
+                .eq('key', 'pending_ai_reply');
             }
 
-            if (isClosing) {
-              console.log(`🏁 [SESI PENUTUPAN] AI telah menyampaikan salam penutup / merangkum resolusi sesi chat.`);
-              console.log(`⏳ Memberi jeda 40 detik agar CS menutup sesi chat sebelum memproses tiket antrean berikutnya...`);
-
-              await new Promise((r) => setTimeout(r, 40000));
-
-              const finalNow = new Date().toISOString();
-              const isActualTicket = detectedOutcome && /^[A-Z0-9]{8}$/.test(detectedOutcome);
-              const finalStatus = isActualTicket ? 'ticket_issued' : 'closed';
-
-              await supabase
-                .from('tickets')
-                .update({
-                  status: finalStatus,
-                  ticket_issued_at: isActualTicket ? finalNow : null,
-                  updated_at: finalNow,
-                  ticket_number: detectedOutcome || activeTicket.ticket_number,
-                  ...(multiBotSchemaReady ? { pending_ai_reply: null } : {}),
-                })
-                .eq('id', activeTicket.id);
-
-              if (!multiBotSchemaReady) {
-                await supabase
-                  .from('ticketing_settings')
-                  .delete()
-                  .eq('key', 'pending_ai_reply');
-              }
-
-              console.log(`✅ [SESI TUNTAS] Tiket "${activeTicket.name}" resmi ${finalStatus} dengan output: "${detectedOutcome || activeTicket.ticket_number}". Antrean baru aman diproses!\n`);
-              return;
-            }
+            console.log(`✅ [SESI TUNTAS] Tiket "${activeTicket.name}" resmi ${finalStatus} dengan output: "${detectedOutcome || activeTicket.ticket_number}". Antrean baru aman diproses!\n`);
+            return;
           }
         }
       }
+    }
   } catch (err) {
     console.error('   ⚠️ Error sync chat:', err.message);
   }
@@ -2027,7 +2102,7 @@ async function syncWorkerAndCheckConflict(activeTicketId = null) {
         },
         updated_at: nowIso,
       });
-    } catch {}
+    } catch { }
 
     if (!multiBotSchemaReady) {
       return { ok: true };
@@ -2077,7 +2152,7 @@ async function syncWorkerAndCheckConflict(activeTicketId = null) {
           status: 'paused',
           last_heartbeat: nowIso,
         });
-      } catch {}
+      } catch { }
 
       let conflictMsg = '';
       if (igConflict) {
@@ -2137,7 +2212,7 @@ async function setWorkerOffline() {
       },
       updated_at: nowIso,
     });
-  } catch {}
+  } catch { }
 }
 
 // Pasang listener realtime agar respon manual admin dari Web langsung terkirim seketika
@@ -2157,6 +2232,9 @@ function setupRealtimeOutboundListener() {
         async (payload) => {
           const msg = payload.new;
           if (msg && msg.sender === 'admin' && typeof msg.ig_mid === 'string' && msg.ig_mid.startsWith('pending')) {
+            if (currentlySendingMsgIds.has(msg.id)) return;
+            currentlySendingMsgIds.add(msg.id);
+
             try {
               // Pastikan tiket ini memang milik akun IG bot ini (anti-salah kirim antar laptop!)
               if (multiBotSchemaReady && myIgUserId && msg.ticket_id) {
@@ -2174,14 +2252,21 @@ function setupRealtimeOutboundListener() {
               // Jangan kirim jika bot sedang dijeda akibat bentrok akun
               if (lastConflictLog) return;
 
+              // Klaim secara atomik di database: hanya proses jika ig_mid masih 'pending%'
+              const { data: claimed, error: claimErr } = await supabase
+                .from('ticket_messages')
+                .update({ ig_mid: `sending_${msg.id}` })
+                .eq('id', msg.id)
+                .like('ig_mid', 'pending%')
+                .select('id');
+
+              if (claimErr || !claimed || claimed.length === 0) {
+                return; // Sudah diklaim oleh polling loop
+              }
+
               const page = await getDirectThreadPage();
               if (page) {
                 console.log(`\n⚡ [REALTIME WEB -> IG] Mengirim pesan manual admin: "${msg.body}"`);
-                await supabase
-                  .from('ticket_messages')
-                  .update({ ig_mid: `sending_${msg.id}` })
-                  .eq('id', msg.id);
-
                 await sendMessageToDirectThread(page, msg.body);
 
                 await supabase
@@ -2193,6 +2278,8 @@ function setupRealtimeOutboundListener() {
               }
             } catch (e) {
               console.warn('⚠️ Realtime outbound tertunda, akan dikirim pada siklus periksa berikutnya:', e.message);
+            } finally {
+              currentlySendingMsgIds.delete(msg.id);
             }
           }
         }
@@ -2396,7 +2483,7 @@ async function startBotLoop() {
             await new Promise((r) => setTimeout(r, 2000));
             process.exit(42);
           }
-        } catch {}
+        } catch { }
       }
 
       // Pastikan identitas IG (ds_user_id) sudah terdeteksi
@@ -2457,9 +2544,9 @@ const cleanup = async () => {
   console.log('\n🛑 Menutup bot dan melepas kunci akun...');
   try {
     await setWorkerOffline();
-  } catch {}
+  } catch { }
   if (persistentBrowser) {
-    try { await persistentBrowser.close(); } catch {}
+    try { await persistentBrowser.close(); } catch { }
   }
   process.exit(0);
 };
