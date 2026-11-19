@@ -2478,6 +2478,82 @@ async function claimNextQueuedTicket() {
   return null;
 }
 
+// Pemeriksaan & Pemicu Otomatis Rekapan Absensi Harian (Backup Cloud Vercel Cron)
+let lastRecapCheckTime = 0;
+async function checkAndTriggerDailyAttendanceRecap() {
+  if (Date.now() - lastRecapCheckTime < 60000) return; // Maksimal cek 1 menit sekali
+  lastRecapCheckTime = Date.now();
+
+  try {
+    // 1. Hitung waktu WITA (UTC+8)
+    const nowUtc = Date.now() + new Date().getTimezoneOffset() * 60000;
+    const wita = new Date(nowUtc + 8 * 3600000);
+    const dayOfWeek = wita.getDay() === 0 ? 7 : wita.getDay(); // 1=Senin, 7=Minggu
+    if (dayOfWeek === 6 || dayOfWeek === 7) return; // Libur akhir pekan
+
+    const yyyy = wita.getFullYear();
+    const mm = String(wita.getMonth() + 1).padStart(2, '0');
+    const dd = String(wita.getDate()).padStart(2, '0');
+    const todayWitaStr = `${yyyy}-${mm}-${dd}`;
+
+    // 2. Baca pengaturan rekapan harian dari ticketing_settings
+    const { data: settingRow } = await supabase
+      .from('ticketing_settings')
+      .select('value')
+      .eq('key', 'daily_recap_email_settings')
+      .maybeSingle();
+
+    const val = (settingRow?.value && typeof settingRow.value === 'object' ? settingRow.value : {}) || {};
+    const dailyIsActive = val.dailyIsActive ?? true;
+    if (!dailyIsActive) return;
+
+    // Cek apakah hari ini sudah pernah berhasil dikirim
+    const dailyLastSentAt = val.dailyLastSentAt;
+    const isAlreadySentToday = Boolean(
+      dailyLastSentAt &&
+      new Date(dailyLastSentAt).toLocaleDateString('en-CA', { timeZone: 'Asia/Makassar' }) === todayWitaStr
+    );
+    if (isAlreadySentToday) return;
+
+    // Cek apakah jam sekarang sudah mencapai target pengiriman (default 18:00 WITA)
+    const [targetHour, targetMin] = (val.dailySendTime || '18:00').split(':').map(Number);
+    const targetMinutes = targetHour * 60 + (targetMin || 0);
+    const currentMinutes = wita.getHours() * 60 + wita.getMinutes();
+
+    if (currentMinutes < targetMinutes) return;
+
+    // Cek apakah hari ini tanggal merah
+    const { data: holidayData } = await supabase
+      .from('holidays')
+      .select('name')
+      .eq('holiday_date', todayWitaStr)
+      .maybeSingle();
+
+    if (holidayData) {
+      return; // Libur nasional, lewati
+    }
+
+    logEvent(`\n[REKAP ABSEN] ⏰ Waktu pengiriman rekapan absen harian (${val.dailySendTime || '18:00'} WITA) tercapai! Memproses pengiriman...`);
+
+    const sess = await supabase.auth.getSession();
+    const token = sess?.data?.session?.access_token;
+    const endpoint = 'https://www.magang-iconnet.online/api/cron/send-recap?force=harian';
+
+    const res = await fetch(endpoint, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+
+    const result = await res.json().catch(() => null);
+    if (res.ok && result?.success) {
+      logEvent(`[REKAP ABSEN] ✓ Rekap absen harian berhasil dikirim otomatis oleh Bot Runner!`);
+    } else {
+      console.warn(`[REKAP ABSEN] ⚠️ Gagal mengirim rekapan:`, result?.error || result?.results || res.statusText);
+    }
+  } catch (err) {
+    console.warn(`[REKAP ABSEN] ⚠️ Gagal memeriksa jadwal rekapan:`, err.message);
+  }
+}
+
 // Loop Utama Bot
 async function startBotLoop() {
   console.log('=======================================================');
@@ -2525,6 +2601,9 @@ async function startBotLoop() {
       if (Date.now() - lastConfigSyncTime > 300000) {
         await syncRemoteConfig();
       }
+
+      // Cek dan picu pengiriman rekapan absensi harian otomatis jika waktu target tiba (~1 menit sekali)
+      await checkAndTriggerDailyAttendanceRecap();
 
       // Cek pembaruan bot otomatis dari GitHub (~15 menit sekali, hanya saat antrean idle)
       if (!currentActiveTicketId && Date.now() - lastUpdateCheckTime > 900000) {
