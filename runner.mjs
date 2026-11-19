@@ -823,19 +823,54 @@ async function _doSendMessage(page, text) {
   });
   await new Promise((r) => setTimeout(r, 100));
 
-  // 2. Masukkan teks pesan secara instan & 100% presisi (0% typo) menggunakan document.execCommand('insertText')
-  const inserted = await page.evaluate((val) => {
-    const el = document.querySelector(
-      'div[role="textbox"][contenteditable="true"], div[aria-label="Message"], div[aria-label="Pesan"]'
-    );
-    if (!el) return false;
-    el.focus();
-    const success = document.execCommand('insertText', false, val);
-    return success;
-  }, text);
+  // 2. Masukkan teks pesan secara instan, 100% presisi (0% typo) dengan format baris baru (Shift + Enter) yang rapi
+  let insertSuccess = true;
+  const lines = text.split('\n');
 
-  // Fallback: Jika execCommand tidak didukung pada browser tertentu, ketik dengan keyboard
-  if (!inserted) {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.length > 0) {
+      const ok = await page.evaluate((val) => {
+        const el = document.querySelector(
+          'div[role="textbox"][contenteditable="true"], div[aria-label="Message"], div[aria-label="Pesan"]'
+        );
+        if (!el) return false;
+        el.focus();
+        return document.execCommand('insertText', false, val);
+      }, line);
+
+      if (!ok) {
+        insertSuccess = false;
+        break;
+      }
+    }
+
+    // Jika masih ada baris berikutnya, tekan Shift + Enter untuk membuat baris baru yang rapi di Instagram DM
+    if (i < lines.length - 1) {
+      await page.keyboard.down('Shift');
+      await page.keyboard.press('Enter');
+      await page.keyboard.up('Shift');
+      await new Promise((r) => setTimeout(r, 40));
+    }
+  }
+
+  // Fallback: Jika execCommand tidak didukung pada browser tertentu, bersihkan dan ketik dengan keyboard
+  if (!insertSuccess) {
+    await page.evaluate(() => {
+      const el = document.querySelector(
+        'div[role="textbox"][contenteditable="true"], div[aria-label="Message"], div[aria-label="Pesan"]'
+      );
+      if (el) {
+        el.focus();
+        const sel = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        sel.removeAllRanges();
+        sel.addRange(range);
+        document.execCommand('delete');
+      }
+    });
+
     for (const char of text) {
       if (char === '\n') {
         await page.keyboard.down('Shift');
