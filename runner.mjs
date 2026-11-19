@@ -436,6 +436,14 @@ async function generateAIReply(ticket, incomingMessage) {
   const statusIndikatorText = isLoss ? 'lampu indikator merah (LOS)' : 'tidak ada indikator merah';
   const timeContext = getWitaTimeContext();
 
+  // Ekstrak nama CS jika ada di pesan masuk (contoh: "dengan Nia yang akan membantu")
+  let csName = '';
+  const csMatch = (incomingMessage || '').match(/dengan\s+([A-Za-z]+)\s+yang\s+(?:akan\s+)?membantu/i);
+  if (csMatch && csMatch[1]) {
+    csName = csMatch[1].trim();
+  }
+  const csSalutation = csName ? `Kak ${csName}` : 'Kak';
+
   // Cek apakah tiket memiliki foto lampiran di Supabase
   let hasImages = false;
   try {
@@ -454,77 +462,48 @@ async function generateAIReply(ticket, incomingMessage) {
     ? 'foto lampu indikator modem dan nomor SN di bagian belakang sudah kami kirimkan di atas ya Kak'
     : 'untuk foto saat ini belum dapat kami lampirkan';
 
-  const defaultSafeReply = `Baik Kak, ${photoInfo}. Untuk kendalanya ${statusIndikatorText}, dan untuk ${contactInfo}. Mohon bantuannya untuk dilakukan pengecekan Kak. Terima kasih.`;
+  const defaultSafeReply = `Baik ${csSalutation}, kendala ${ticket.complaint || 'internet'} (${statusIndikatorText}) terjadi sejak hari ini. Untuk ${contactInfo}, dan ${photoInfo}. Mohon bantuannya untuk diproses laporan gangguannya ya Kak. Terima kasih.`;
 
-  const prompt = `Kamu adalah PELAPOR / ADMIN PELANGGAN yang sedang berkomunikasi dengan CS ICONNET di Instagram Direct Message (DM).
-PENTING:
-- LAWAN BICARAMU: Petugas Customer Service ICONNET (sapa dengan "Kak" atau "Kak [Nama Agen CS]").
-- IDENTITAS KITA: Pihak pelapor yang mewakili pelanggan "${ticket.name}".
-- DILARANG KERAS menyapa "Kak ${ticket.name}" karena "${ticket.name}" adalah nama pihak kita sendiri/nama pelanggan kita!
-- DILARANG KERAS meminta foto, nomor telepon, atau data kepada CS! Tugasmu adalah MEMBERIKAN informasi kepada CS, bukan meminta ke CS.
-- DILARANG mengulang permintaan CS (misal jangan katakan "mohon bantuannya untuk mengirimkan lampiran")!
+  const prompt = `Kamu adalah PELAPOR / KONSUMEN (Pelanggan) yang sedang chat ke Customer Service (CS) ICONNET untuk meminta bantuan perbaikan gangguan internet pelanggan kita "${ticket.name}".
 
-WAKTU SEKARANG: ${timeContext.timeStr} (Salam penutup yang tepat: "${timeContext.greeting}")
+ATURAN PALING KRUSIAL:
+1. KAMU ADALAH PELANGGAN / PELAPOR, BUKAN CS ICONNET!
+   - DILARANG KERAS mengucapkan "terima kasih telah menjadi pelanggan setia ICONNET"!
+   - DILARANG KERAS meminta maaf atas kendala ("kami mohon maaf atas ketidaknyamanan")!
+   - DILARANG menyapa dengan nama akun IG pelapor kita sendiri (${myIgUsername ? `"Kak ${myIgUsername}", ` : ''}"Kak Artha", "Kak Semadi", dsb)!
+   - DILARANG mengulang atau menjiplak template salam pembuka CS!
+2. LAWAN BICARAMU ADALAH CS ICONNET:
+   - Sapa CS dengan: "${csSalutation}".
+3. TUGASMU ADALAH MEMBERIKAN DATA PELANGGAN:
+   - Pertanyaan sejak kapan kendala: Jawab "terjadi sejak hari ini / tadi siang".
+   - Pertanyaan nomor kontak alternatif: ${ticket.alt_phone ? `Jawab "ada nomor alternatif di ${ticket.alt_phone} dan nomor utama di ${ticket.phone}"` : `Jawab "tidak ada nomor alternatif, hanya ada nomor utama terdaftar di ${ticket.phone || '-'}"`}.
+   - Pertanyaan foto modem dan nomor SN: Jawab "${photoInfo}".
+   - Kondisi modem: Jawab "${statusIndikatorText}".
+   - Apakah sudah restart modem: Jawab "sudah dicoba matikan dan restart modem selama beberapa menit namun kendala tetap sama".
+   - Selalu akhiri dengan: "Mohon bantuannya untuk diproses laporan gangguannya ya Kak. Terima kasih."
 
-DATA TIKET KITA (Satu-satunya sumber fakta):
-- Nama Pelanggan: ${ticket.name}
+4. PENUTUPAN TIKET:
+   - Jika CS SUDAH MEMBERIKAN NOMOR TIKET RESMI (misal 8 karakter seperti "R2J9KM3E" atau "IN..."):
+     Set is_closing: true, ticket_number: "[KODE_TIKET]", dan jawab: "Baik ${csSalutation}, terima kasih banyak atas bantuannya. ${timeContext.greeting}!"
+   - Jika CS menginfokan gangguan massal / terisolir / perbaikan sistem:
+     Set is_closing: true, ticket_number: "[Keterangan]", dan beri ucapan terima kasih penutup.
+   - JIKA BELUM ADA NOMOR TIKET: DILARANG set is_closing: true dan DILARANG mengirim salam penutup!
+
+DATA PELANGGAN KITA:
+- Nama: ${ticket.name}
 - ID Pelanggan: ${ticket.customer_id}
 - No Telepon: ${ticket.phone || '-'}
-- No Telepon Alternatif: ${ticket.alt_phone || '-'}
+- No Telepon Alternatif: ${ticket.alt_phone || 'Tidak Ada'}
 - Keluhan: ${ticket.complaint}
 - Kondisi Indikator Modem: ${statusIndikatorText}
-- Status Foto Lampiran: ${hasImages ? 'SUDAH TERKIRIM DI CHAT SEBELUMNYA' : 'BELUM TERSEDIA'}
+- Foto Lampiran: ${hasImages ? 'SUDAH TERKIRIM' : 'BELUM TERSEDIA'}
 
-CONTOH KASUS & JAWABAN YANG BENAR:
-
-Contoh 1 (CS meminta lampiran / foto & no telepon):
-Pesan CS: "Mohon dibantu kirimkan foto modem depan indikator, foto SN belakang, dan no alternatif."
-Jawaban Kamu:
-"Baik Kak, ${photoInfo}. Untuk kendalanya ${statusIndikatorText}, dan untuk ${contactInfo}. Mohon bantuannya untuk dilakukan pengecekan Kak. Terima kasih."
-
-Contoh 2 (CS menanyakan apakah sudah restart):
-Pesan CS: "Apakah sudah dicoba mematikan modem 5-10 menit?"
-Jawaban Kamu:
-"Sudah kami coba matikan dan restart modem selama beberapa menit Kak, namun kendalanya masih tetap sama. Mohon dibantu pengecekannya Kak. Terima kasih."
-
-Contoh 3 (CS menanyakan konfirmasi data/perubahan wifi):
-Pesan CS: "Apakah bersedia untuk pergantian password / reset konfigurasi?"
-Jawaban Kamu:
-"Sudah sesuai Kak, kami bersedia untuk dibantu prosesnya. Terima kasih Kak."
-
-Contoh 4 (CS baru menyapa di awal chat):
-Pesan CS: "Halo Kak, dengan Jadug siap membantu. Ada yang bisa dibantu?"
-Jawaban Kamu:
-"Baik Kak Jadug, mohon bantuannya untuk penanganan kendala internet kami. Terima kasih."
-
-Contoh 5 (CS memberikan nomor tiket resmi):
-Pesan CS: "Laporan sudah dibuatkan dengan nomor tiket IN12345678. Petugas akan menghubungi."
-Jawaban Kamu:
-Set is_closing = true, ticket_number = "IN12345678", text = "Baik Kak, terima kasih banyak atas bantuannya. ${timeContext.greeting}!"
-
-Contoh 6 (CS melakukan perbaikan sistem / restart dari pusat):
-Pesan CS: "Sudah kami bantu perbaikan/refresh dari sistem kami, mohon tunggu 5-10 menit."
-Jawaban Kamu:
-Set is_closing = true, ticket_number = "Perbaikan Sistem (Tunggu 5-10 Menit)", text = "Baik Kak, terima kasih atas bantuannya. Kami tunggu prosesnya. ${timeContext.greeting}!"
-
-Contoh 7 (CS menginfokan layanan terisolir / ada tagihan tertunggak):
-Pesan CS: "Status layanan internet terisolir. Silakan dapat melakukan pembayaran agar dapat kami bantu tindak lanjut kendala yang dialami ya kak."
-Jawaban Kamu:
-Set is_closing = true, ticket_number = "Belum Bayar / Tagihan Tertunggak", text = "Baik Kak, terima kasih atas informasinya. Akan kami sampaikan ke pelanggan untuk melakukan pembayaran terlebih dahulu. Terima kasih atas bantuannya Kak. ${timeContext.greeting}!"
-
-Contoh 8 (CS menginfokan gangguan massal / pemeliharaan area):
-Pesan CS: "Saat ini sedang ada gangguan massal / pemeliharaan di area pelanggan."
-Jawaban Kamu:
-Set is_closing = true, ticket_number = "Gangguan Massal di Area", text = "Baik Kak, terima kasih atas informasinya. Kami tunggu proses normalisasi jaringannya Kak. Terima kasih bantuannya Kak. ${timeContext.greeting}!"
-
-PENTING: DILARANG KERAS MENGIRIM SALAM PENUTUP ATAU SET "is_closing": true KECUALI CS SUDAH MEMBERIKAN NOMOR TIKET RESMI ATAU TINDAKAN PENYELESAIAN JELAS (SEPERTI ISOLIR / GANGGUAN MASSAL / RESTART)!
-
-KELUARAN HANYA JSON VALID TANPA MARKDOWN:
+KELUARAN HANYA JSON VALID:
 {
   "action": "reply",
   "text": "isi balasan ke CS",
-  "ticket_number": "kode tiket atau null",
-  "is_closing": true/false
+  "ticket_number": null,
+  "is_closing": false
 }`;
 
   if (!nvidiaApiKey) {
@@ -574,23 +553,35 @@ KELUARAN HANYA JSON VALID TANPA MARKDOWN:
 
     // Post-processing Sanitizer untuk menjamin 100% akurasi respon
     if (parsed.text) {
-      // 1. Bersihkan jika LLM salah menyapa nama pelanggan sendiri (misal "Kak Suardana")
-      if (ticket.name) {
-        const escapedName = ticket.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const nameRegex = new RegExp(`\\b(?:Kak|Pak|Ibu|Bpk)?\\s*${escapedName}\\b`, 'gi');
-        parsed.text = parsed.text.replace(nameRegex, 'Kak').trim();
+      const lower = parsed.text.toLowerCase();
+
+      // 1. Deteksi jika LLM tersesat/parroting menjiplak pesan pembuka CS
+      if (
+        lower.includes('pelanggan setia') ||
+        lower.includes('mohon maaf atas ketidaknyamanan') ||
+        lower.includes('mohon melengkapi informasi data pendukung') ||
+        lower.includes('agar dapat dilakukan tindak lanjut') ||
+        lower.includes('apakah dapat diinformasikan sejak kapan') ||
+        lower.includes('apakah dapat dibantu informasikan nomor') ||
+        lower.includes('mohon dibantu mengirimkan foto perangkat') ||
+        lower.includes('mohon bantuannya untuk mengirimkan lampiran') ||
+        lower.includes('mohon bantuannya untuk kirimkan lampiran')
+      ) {
+        logEvent('⚠️ [AI SANITIZER] Terdeteksi LLM menjiplak kalimat CS! Mengganti ke jawaban aman terstruktur.');
+        parsed.text = defaultSafeReply;
       }
 
-      // 2. Cegah mirroring / parroting jika LLM mengulang permintaan lampiran CS
-      const lower = parsed.text.toLowerCase();
-      if (
-        lower.includes('mohon bantuannya untuk mengirimkan lampiran') ||
-        lower.includes('mohon bantuannya untuk kirimkan lampiran') ||
-        lower.includes('mohon dibantu untuk mengirimkan lampiran') ||
-        lower.includes('mohon bantuannya untuk mengirimkan nomor telepon') ||
-        lower.includes('mohon informasikan nomor telepon alternatif')
-      ) {
-        parsed.text = defaultSafeReply;
+      // 2. Bersihkan jika LLM menyapa nama akun pelapor kita sendiri atau nama pelanggan
+      if (myIgUsername) {
+        const escapedIg = myIgUsername.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        parsed.text = parsed.text.replace(new RegExp(`\\b(?:Kak|Pak|Ibu)?\\s*${escapedIg}\\b`, 'gi'), csSalutation);
+      }
+      parsed.text = parsed.text.replace(/\b(?:Kak|Pak|Ibu)?\s*(?:Artha|Semadi|Sanjaya)\b/gi, csSalutation);
+
+      if (ticket.name) {
+        const escapedName = ticket.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const nameRegex = new RegExp(`\\b(?:Kak|Pak|Ibu|Bpk)\\s+${escapedName}\\b`, 'gi');
+        parsed.text = parsed.text.replace(nameRegex, csSalutation).trim();
       }
 
       // 3. Rapikan spasi dan sapaan berulang ("Kak Kak")
