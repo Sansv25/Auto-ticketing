@@ -290,6 +290,18 @@ supabase.auth.onAuthStateChange((event, session) => {
   }
 });
 
+// Siarkan perubahan status tiket ke semua dashboard web yang sedang aktif
+async function broadcastTicketEvent(action = 'update', ticketId = null) {
+  try {
+    const ch = supabase.channel('tickets-realtime-feed');
+    await ch.send({
+      type: 'broadcast',
+      event: 'ticket_changed',
+      payload: { action, ticketId, timestamp: Date.now() },
+    });
+  } catch { }
+}
+
 // Utilitas Logging Bersih & Anti-Spam
 const spinnerFrames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 let spinnerIdx = 0;
@@ -1013,6 +1025,7 @@ async function dispatchTicket(ticket) {
       };
 
     await supabase.from('tickets').update(updatePayload).eq('id', ticket.id);
+    await broadcastTicketEvent('update', ticket.id);
 
     await supabase.from('ticket_messages').insert({
       ticket_id: ticket.id,
@@ -1038,6 +1051,7 @@ async function dispatchTicket(ticket) {
           }
           : { status: 'queued', started_at: null, updated_at: new Date().toISOString() };
         await supabase.from('tickets').update(releasePayload).eq('id', ticket.id);
+        await broadcastTicketEvent('update', ticket.id);
         console.log(`↩️ [ROLLBACK] Tiket "${ticket.name}" dikembalikan ke antrean karena gagal kirim.`);
       } catch { }
     }
@@ -1764,6 +1778,7 @@ async function syncActiveChat(activeTicket) {
           updated_at: now,
         })
         .eq('id', activeTicket.id);
+      await broadcastTicketEvent('update', activeTicket.id);
 
       if (!multiBotSchemaReady) {
         await supabase
@@ -1847,6 +1862,7 @@ async function syncActiveChat(activeTicket) {
           updated_at: now,
         })
         .eq('id', activeTicket.id);
+      await broadcastTicketEvent('update', activeTicket.id);
 
       if (!multiBotSchemaReady) {
         await supabase
@@ -1895,6 +1911,7 @@ async function syncActiveChat(activeTicket) {
           updated_at: finalNow,
         })
         .eq('id', activeTicket.id);
+      await broadcastTicketEvent('update', activeTicket.id);
 
       if (!multiBotSchemaReady) {
         await supabase
