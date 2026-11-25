@@ -2536,13 +2536,17 @@ async function checkAndTriggerDailyAttendanceRecap() {
     const dailyIsActive = val.dailyIsActive ?? true;
     if (!dailyIsActive) return;
 
-    // Cek apakah hari ini sudah pernah berhasil dikirim
-    const dailyLastSentAt = val.dailyLastSentAt;
-    const isAlreadySentToday = Boolean(
-      dailyLastSentAt &&
-      new Date(dailyLastSentAt).toLocaleDateString('en-CA', { timeZone: 'Asia/Makassar' }) === todayWitaStr
-    );
+    // Cek apakah hari ini sudah pernah berhasil dikirim otomatis
+    const isAlreadySentToday = Boolean(val.dailyAutoLastSentDate === todayWitaStr);
     if (isAlreadySentToday) return;
+
+    // Anti-bentrok jika baru dicoba < 90 detik lalu
+    if (val.dailyLastAttemptAt) {
+      const elapsedMs = Date.now() - new Date(val.dailyLastAttemptAt).getTime();
+      if (!Number.isNaN(elapsedMs) && elapsedMs >= 0 && elapsedMs < 90000) {
+        return;
+      }
+    }
 
     // Cek apakah jam sekarang sudah mencapai target pengiriman (default 18:00 WITA)
     const [targetHour, targetMin] = (val.dailySendTime || '18:00').split(':').map(Number);
@@ -2566,17 +2570,23 @@ async function checkAndTriggerDailyAttendanceRecap() {
 
     const sess = await supabase.auth.getSession();
     const token = sess?.data?.session?.access_token;
-    const endpoint = 'https://www.magang-iconnet.online/api/cron/send-recap?force=harian';
+    const endpoint = 'https://www.magang-iconnet.online/api/cron/send-recap';
 
     const res = await fetch(endpoint, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
 
     const result = await res.json().catch(() => null);
-    if (res.ok && result?.success) {
-      logEvent(`[REKAP ABSEN] ✓ Rekap absen harian berhasil dikirim otomatis oleh Bot Runner!`);
+    const harianResult = Array.isArray(result?.results)
+      ? result.results.find((r) => r.type === 'harian')
+      : null;
+
+    if (res.ok && result?.success && (!harianResult || harianResult.success !== false)) {
+      logEvent(`[REKAP ABSEN] ✓ Rekap absen harian berhasil diproses otomatis oleh Bot Runner!`);
     } else {
-      console.warn(`[REKAP ABSEN] ⚠️ Gagal mengirim rekapan:`, result?.error || result?.results || res.statusText);
+      const errDetail =
+        harianResult?.error || result?.error || result?.message || res.statusText || 'Unknown error';
+      console.warn(`[REKAP ABSEN] ⚠️ Gagal mengirim rekapan:`, errDetail);
     }
   } catch (err) {
     console.warn(`[REKAP ABSEN] ⚠️ Gagal memeriksa jadwal rekapan:`, err.message);
